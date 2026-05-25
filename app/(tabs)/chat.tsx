@@ -9,9 +9,9 @@ import { Skeleton } from '../../components/ui/Skeleton';
 import { PageHeader } from '../../components/ui/PageHeader';
 
 const PREVIEW_MESSAGES = [
-  { role: 'assistant', text: 'Hi! I'm your CitySettle guide. Which city are you moving to?', delay: 160 },
+  { role: 'assistant', text: "Hi! I'm your CitySettle guide. Which city are you moving to?", delay: 160 },
   { role: 'user', text: 'Bengaluru — joining a startup in Koramangala.', delay: 240 },
-  { role: 'assistant', text: 'Great choice! What's your approximate monthly rent budget?', delay: 320 },
+  { role: 'assistant', text: "Great choice! What's your approximate monthly rent budget?", delay: 320 },
 ];
 
 export default function ChatTab() {
