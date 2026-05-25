@@ -4,7 +4,7 @@ Find your perfect neighbourhood in Bengaluru or Mumbai.
 
 ## Stack
 
-Expo SDK 55 · Expo Router · Supabase · NativeWind v4 · Zustand · TanStack Query · Reanimated v3 · Moti
+Expo SDK 55 · Expo Router v5 · Supabase (Postgres + Edge Functions) · NativeWind v4 · Zustand v5 · TanStack Query v5 · Reanimated v3 · Moti · react-native-maps · @gorhom/bottom-sheet · react-native-svg
 
 ## Setup
 
@@ -14,11 +14,7 @@ Expo SDK 55 · Expo Router · Supabase · NativeWind v4 · Zustand · TanStack Q
 npm install
 ```
 
-If you hit peer dependency warnings on Expo-owned packages, let Expo resolve them:
-
-```bash
-npx expo install --fix
-```
+> The `.npmrc` file already sets `legacy-peer-deps=true` so this should work without extra flags.
 
 ### 2. Environment variables
 
@@ -26,32 +22,74 @@ npx expo install --fix
 cp .env.example .env.local
 ```
 
-Open `.env.local` and fill in your Supabase credentials:
+Fill in `.env.local`:
 
 ```
 EXPO_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
+EXPO_PUBLIC_GOOGLE_MAPS_API_KEY=your-google-maps-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
+
+**Google Maps key** — enable these APIs in Google Cloud Console:
+- Maps SDK for iOS
+- Maps SDK for Android
+- Places API
+
+**Supabase service role key** — used only by the Edge Function (never in the client bundle).
 
 ### 3. Supabase project setup
 
 1. Create a project at [supabase.com](https://supabase.com)
 2. Open **SQL Editor** and run `supabase/migrations/0001_init.sql`
-3. Copy **Project URL** and **anon key** from Settings → API → Project API keys into `.env.local`
-4. Enable Google OAuth: Authentication → Providers → Google (paste your Google OAuth client ID & secret)
-5. Add redirect URL: Authentication → URL Configuration → add `citysettle://`
+3. Run `supabase/seed/neighborhoods.sql` to load 40 Bengaluru + Mumbai neighbourhoods
+4. Copy **Project URL** and **anon key** into `.env.local`
+5. Enable Google OAuth: Authentication → Providers → Google
+6. Add redirect URL: Authentication → URL Configuration → `citysettle://`
 
-### 4. Run the app
+### 4. Deploy the scoring Edge Function
 
 ```bash
-# Expo Go (fastest — scan QR with the Expo Go app)
-npx expo start
+# Install Supabase CLI
+npm install -g supabase
 
-# iOS Simulator (requires Xcode)
-npx expo run:ios
+# Link to your project
+supabase link --project-ref YOUR_PROJECT_REF
 
-# Android Emulator (requires Android Studio)
+# Set the server-side Google Maps key (Distance Matrix API)
+supabase secrets set GOOGLE_MAPS_SERVER_KEY=your-server-only-key
+
+# Deploy
+supabase functions deploy score-neighborhoods
+```
+
+### 5. Run the app
+
+> **Expo Go will not work** — the app uses native modules (react-native-maps, @gorhom/bottom-sheet) that require a development build.
+
+**Android (USB — recommended for first run):**
+
+1. Enable Developer Options on your device → turn on USB Debugging
+2. Connect via USB and tap **Allow** on the device
+3. Run:
+
+```bash
 npx expo run:android
+```
+
+**iOS (USB — requires Xcode + Apple ID):**
+
+```bash
+npx expo run:ios --device
+```
+
+**EAS Build (cloud, no USB needed):**
+
+```bash
+npm install -g eas-cli
+eas login
+eas build --platform android --profile development   # APK download link
+eas build --platform ios --profile development        # requires Apple Developer account
 ```
 
 ## Features
@@ -61,15 +99,31 @@ npx expo run:android
 | Auth (email/password + Google OAuth) | ✅ Phase 1 |
 | Design system (Warm Local Friend aesthetic) | ✅ Phase 1 |
 | 5-tab navigation shell with animations | ✅ Phase 1 |
-| Onboarding — office location, salary, preferences | 🔜 Phase 2 |
-| Neighbourhood matching & scoring (AI-powered) | 🔜 Phase 2 |
-| Interactive map with commute overlays | 🔜 Phase 3 |
+| 5-step onboarding (city, office, salary, vibes, family) | ✅ Phase 2 |
+| Neighbourhood scoring Edge Function | ✅ Phase 2 |
+| 40 seed neighbourhoods (Bengaluru + Mumbai) | ✅ Phase 2 |
+| Match tab — scored cards, sub-bars, pull-to-refresh | ✅ Phase 3 |
+| Commute heatmap with colour-coded pins + bottom sheet | ✅ Phase 3 |
+| Cost of living calculator with animated SVG bar | ✅ Phase 3 |
+| Home tab — greeting, hero match card, quick actions | ✅ Phase 3 |
 | AI chat assistant (Claude) | 🔜 Phase 4 |
 | Personalised moving checklist | 🔜 Phase 5 |
 
-## Design system
+## Scoring formula
 
-Palette tokens, typography, spacing, and motion principles live in `tailwind.config.js` and `components/ui/`. All components accept a `delay` prop to stagger entrance animations.
+The `score-neighborhoods` Edge Function scores every neighbourhood for a user:
+
+| Factor | Weight | How |
+|--------|--------|-----|
+| Affordability | 30% | `1 − rent / (salary × 0.35)` |
+| Commute | 25% | `1 − minutes / 90` (Google Distance Matrix or Haversine fallback) |
+| Safety | 20% | `safety_score / 10` |
+| Air quality | 15% | `1 − AQI / 300` |
+| Vibe match | 10% | intersection of user vibes / total user vibes |
+
+Commute data is cached for 7 days per origin+destination+hour_bucket.
+
+## Design system
 
 | Token | Value |
 |-------|-------|
@@ -81,40 +135,50 @@ Palette tokens, typography, spacing, and motion principles live in `tailwind.con
 | UI font | Inter |
 | Data font | JetBrains Mono |
 
+All UI animations use Reanimated v3 or Moti — the legacy `Animated` API is not used.
+
 ## Project structure
 
 ```
 app/
-  _layout.tsx          Root layout — fonts, providers, auth guard
-  index.tsx            Auth-based redirect
+  _layout.tsx              Root layout — fonts, providers, auth guard, GestureHandlerRootView
   (auth)/
-    sign-in.tsx        Email + Google sign-in
-    sign-up.tsx        Email + Google sign-up
+    sign-in.tsx            Email + Google sign-in
+    sign-up.tsx            Email + Google sign-up
   (tabs)/
-    index.tsx          Home
-    match.tsx          Neighbourhood match scores
-    map.tsx            Interactive map
-    chat.tsx           AI guide chat
-    profile.tsx        User profile & preferences
-components/ui/         Text, Button, Card, Input, Chip, Skeleton, PageHeader
-lib/
-  supabase.ts          Supabase client
-  database.types.ts    Hand-written DB types
+    index.tsx              Home — greeting, hero match card, quick actions
+    match.tsx              Neighbourhood scores — cards, sub-bars, compact rows
+    map.tsx                Commute heatmap — colour-coded pins, bottom sheet
+    chat.tsx               AI guide chat
+    profile.tsx            User profile & preferences
+  onboarding/
+    _layout.tsx            Stack layout (headerless)
+    [step].tsx             5-step onboarding wizard (steps 1–5)
+    complete.tsx           Animated completion screen → tabs
+  cost/
+    [neighborhoodId].tsx   Cost of living breakdown — SVG bar, count-up savings
+
+components/ui/             Text, Button, Card, Input, Chip, Skeleton, PageHeader
+
 store/
-  authStore.ts         Zustand auth state
-types/index.ts         Shared app types
+  authStore.ts             Zustand — session, profile, onboarded_at
+  onboardingStore.ts       Zustand — in-progress onboarding form state
+  compareStore.ts          Zustand — up to 3 neighbourhoods queued for comparison
+
+lib/
+  supabase.ts              Supabase client (anon key)
+  database.types.ts        Generated DB types
+
+types/index.ts             Shared app types
+
 supabase/
   migrations/
-    0001_init.sql      Full schema + RLS policies
+    0001_init.sql          Full schema + RLS policies
+  seed/
+    neighborhoods.sql      40 neighbourhoods (20 Bengaluru + 20 Mumbai)
+  functions/
+    score-neighborhoods/   Deno Edge Function — scoring + commute cache
+
+app.config.js              Dynamic Expo config (Google Maps keys, EAS project ID)
+eas.json                   EAS Build profiles (development / preview / production)
 ```
-
-## What to verify manually (Phase 1 checklist)
-
-- [ ] Sign up with a real email address — confirmation email arrives
-- [ ] Click the confirmation link — redirected into the app
-- [ ] Sign in with email/password — lands on Home tab
-- [ ] All 5 tabs are reachable; tab switches trigger haptic feedback
-- [ ] Sign out via the icon on the Home tab — returns to sign-in screen
-- [ ] Sign-in and sign-up screens show staggered input animations
-- [ ] Fonts (Instrument Serif headers, Inter body, JetBrains Mono tags) load correctly
-- [ ] Skeleton shimmer visible on Home and Match tabs
