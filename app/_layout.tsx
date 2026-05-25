@@ -23,7 +23,16 @@ const queryClient = new QueryClient({
 function NavigationGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const segments = useSegments();
-  const { session, initialized, setSession, setInitialized } = useAuthStore();
+  const {
+    session,
+    initialized,
+    profile,
+    profileLoaded,
+    setSession,
+    setInitialized,
+    setProfile,
+    setProfileLoaded,
+  } = useAuthStore();
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -35,22 +44,51 @@ function NavigationGuard({ children }: { children: React.ReactNode }) {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      if (!session) {
+        setProfile(null);
+        setProfileLoaded(false);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
+    if (!session) return;
+    supabase
+      .from('profiles')
+      .select('onboarded_at')
+      .eq('id', session.user.id)
+      .single()
+      .then(({ data }) => {
+        setProfile(data);
+        setProfileLoaded(true);
+      });
+  }, [session?.user.id]);
+
+  useEffect(() => {
     if (!initialized) return;
+    if (session && !profileLoaded) return;
 
-    const inAuthGroup = segments[0] === '(auth)';
+    const seg0 = segments[0] as string | undefined;
+    const inAuthGroup = seg0 === '(auth)';
+    const inOnboardingGroup = seg0 === 'onboarding';
+    const needsOnboarding = session && !profile?.onboarded_at;
 
-    if (!session && !inAuthGroup) {
-      router.replace('/(auth)/sign-in');
-    } else if (session && inAuthGroup) {
-      router.replace('/(tabs)');
+    if (!session) {
+      if (!inAuthGroup) router.replace('/(auth)/sign-in');
+      return;
     }
-  }, [session, segments, initialized]);
+
+    if (inAuthGroup) {
+      router.replace(needsOnboarding ? '/onboarding/1' : '/(tabs)');
+      return;
+    }
+
+    if (needsOnboarding && !inOnboardingGroup) {
+      router.replace('/onboarding/1');
+    }
+  }, [session, segments, initialized, profile, profileLoaded]);
 
   return <>{children}</>;
 }
